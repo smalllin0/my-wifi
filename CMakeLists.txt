@@ -1,0 +1,16 @@
+idf_component_register(
+    SRCS
+        "my_wifi.cc"
+    INCLUDE_DIRS
+        "include"
+    EMBED_TXTFILES
+        "assets/wifi_configuration.html"
+        "assets/wifi_configuration_done.html"
+    REQUIRES
+        "esp_event"
+        "esp_wifi"
+        "esp_timer"
+        "my-nvs"
+        "my-storage"
+        "my-asyncwebserver"
+)
