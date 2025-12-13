@@ -587,7 +587,6 @@ void MyWifi::StartWebServer()
                 // 尝试连接
                 if (ConnectTo(ssid_str, passwd_str)) {
                     SaveAuth(ssid_str, passwd_str);
-                    ESP_LOGW(TAG, "Save wifi success., will send json");
                     req->send(200, "application/json", R"({"success":true})");
                 } else {
                     req->send(200, "application/json", R"({"success":false,"error":"无法连接到 WiFi"})");
