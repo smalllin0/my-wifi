@@ -689,7 +689,7 @@ void MyWifi::StartWebServer()
 
     // 强制所有未注册的路由转至门户
     server_->onNotFound([](AsyncWebServerRequest* req){
-        req->send(404, "text/plain", page404);
+        req->send(404, "text/html", page404);
     });
     server_->begin();
 }
