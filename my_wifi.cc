@@ -470,21 +470,39 @@ void MyWifi::StartWebServer()
         req->send(200, "text/html; charset=utf-8", done_html_start);
     });
     server_->on("/saved/list", [this](AsyncWebServerRequest* req) {
-        std::string json = R"([)";
+        std::vector<std::string> ssids;
         if (!default_ssid_.empty()) {
-            json += R"(")" + default_ssid_ + R"(",)";
+            ssids.push_back(default_ssid_);
         }
-        storage_.ForeachReadOnly([this, &json](const WifiAuth& wifi) {
-            if (default_ssid_ != wifi.ssid) {
-                json += R"(")" + std::string(wifi.ssid) + R"(",)";            
+        storage_.ForeachReadOnly([this, &ssids](const WifiAuth& wifi){
+            if (wifi.ssid[0] != '\0' && default_ssid_ != wifi.ssid) {
+                ssids.push_back(std::string(wifi.ssid));
             }
-            return false;
+            return;
         });
-        if (json.length() > 1) {
+
+        if (ssids.empty()) {
+            req->send(200, "application/json", "[]");
+        } else {
+            size_t total_len = 2;
+            for (const auto& ssid : ssids) {
+                total_len += ssid.size() + 4;
+            }
+            total_len -= 1;
+
+            std::string json;
+            json.reserve(total_len);
+            std::string json = R"([)";
+            for (size_t i = 0; i < ssids.size(); i++) {
+                json.push_back('"');
+                json += ssids[i];
+                json += R"(",)";
+            }
             json.pop_back();
+            json.push_back(']');
+            req->send(200, "application/json", json);
         }
-        json += R"(])";
-        req->send(200, "application/json", json);
+        return;
     });
     server_->on("/saved/set_default", [this](AsyncWebServerRequest* req) {
         default_ssid_ = req->arg("ssid");
