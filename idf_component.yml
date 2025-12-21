@@ -6,3 +6,4 @@ dependencies:
   idf: '>=5.4'
   espressif/cjson: ^1.7.19
   smallin/my-storage: ^1.1.0
+  smallin/my-asyncwebserver: ^1.1.0
