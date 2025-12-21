@@ -1,7 +1,8 @@
 description: 个人使用的wifi库
 license: Apache 2.0
 repository: git@github.com:smalllin0/my-wifi.git
-version: 1.1.0
+version: 1.1.1
 dependencies:
   idf: '>=5.4'
-  espressif/cjson: "^1.7.19"
+  espressif/cjson: ^1.7.19
+  smallin/my-storage: ^1.1.0
