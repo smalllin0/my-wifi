@@ -478,7 +478,7 @@ void MyWifi::StartWebServer()
             if (wifi.ssid[0] != '\0' && default_ssid_ != wifi.ssid) {
                 ssids.push_back(std::string(wifi.ssid));
             }
-            return;
+            return false;
         });
 
         if (ssids.empty()) {
@@ -492,7 +492,7 @@ void MyWifi::StartWebServer()
 
             std::string json;
             json.reserve(total_len);
-            std::string json = R"([)";
+            json += R"([)";
             for (size_t i = 0; i < ssids.size(); i++) {
                 json.push_back('"');
                 json += ssids[i];
