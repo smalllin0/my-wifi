@@ -632,7 +632,7 @@ void MyWifi::StartWebServer()
         json += R"(,"remember_bssid":)";
         json += std::to_string(remember_bssid_);
         json += R"(,"sleep_mode":)";
-        json += + std::to_string(sleep_mode_);
+        json += std::to_string(sleep_mode_);
         json += R"(})";
         req->send(200, "application/json", json);
     });
