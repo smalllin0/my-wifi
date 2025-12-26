@@ -623,10 +623,17 @@ void MyWifi::StartWebServer()
         }, "reboot_task", 4096, nullptr, 5, NULL);
     });
     server_->on("/advanced/config", [this](AsyncWebServerRequest* req) {
-        std::string json = R"({"ota_url":")" + ota_url_ + R"(",)";
-        json += R"("max_tx_power":)" + std::to_string(max_tx_power_) + R"(,)";
-        json += R"("remember_bssid":)" + std::to_string(remember_bssid_) + R"(,)";
-        json += R"("sleep_mode":)" + std::to_string(sleep_mode_) + R"(})";
+        std::string json;
+        json.reserve(512);
+        json += R"({"ota_url":")";
+        json += ota_url_;
+        json += R"(","max_tx_power":)";
+        json += std::to_string(max_tx_power_);
+        json += R"(,"remember_bssid":)";
+        json += std::to_string(remember_bssid_);
+        json += R"(,"sleep_mode":)";
+        json += + std::to_string(sleep_mode_);
+        json += R"(})";
         req->send(200, "application/json", json);
     });
     server_->on("/advanced/submit", HTTP_POST, 
