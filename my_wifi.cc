@@ -75,7 +75,10 @@ void MyWifi::Start()
     // 初始化扫描定时器
     esp_timer_create_args_t timer_args = {
         .callback = [](void* arg) {
-            esp_wifi_scan_start(nullptr, false);
+            auto* self = (MyWifi*)arg;
+            if (!self->is_connecting_) {
+                esp_wifi_scan_start(nullptr, false);
+            }
         },
         .arg = this,
         .dispatch_method = ESP_TIMER_TASK,
@@ -111,7 +114,6 @@ void MyWifi::Stop()
         esp_netif_destroy(station_if_);
         station_if_ = nullptr;
     }
-
 }
 
 bool MyWifi::IsConnected()
@@ -191,6 +193,7 @@ void MyWifi::HandleScanResult()
     uint16_t ap_num = 0;
     esp_wifi_scan_get_ap_num(&ap_num);
     if (ap_num == 0) {
+        if (config_mode_) esp_timer_start_once(timer_handle_, 10 * 1000000);
         return;
     }
     xEventGroupWaitBits(event_group_, SSID_VECTOR_FREE_BIT, pdTRUE, pdFALSE, portMAX_DELAY);
@@ -240,10 +243,8 @@ void MyWifi::HandleScanResult()
 
         // 开始连接/重新扫描
         if (connect_queue_.empty()) {
-            ESP_LOGI(TAG, "Wait for next scan");
+            ESP_LOGI(TAG, "等待下次扫描");
             esp_timer_start_once(timer_handle_, 100 * 1000);
-            xEventGroupSetBits(event_group_, SSID_VECTOR_FREE_BIT);
-            return;
         } else {
             StartConnect();
         }
@@ -271,6 +272,7 @@ void MyWifi::HandleDisconnected()
             return;
         } else {
             ESP_LOGI(TAG, "No more AP to connect, wait for next scan.");
+            is_connecting_ = false;
             esp_timer_start_once(timer_handle_, 10 * 1000);
         }
     }
@@ -290,6 +292,7 @@ void MyWifi::StartConnect()
     }
 
     ConnectTo(ssid_, password_, false);
+
 }
 
 /// @brief IP事件处理器
@@ -315,14 +318,26 @@ void MyWifi::IpEventHandler(void* arg, esp_event_base_t event_base, int32_t even
 /// @brief 进入配置模式
 void MyWifi::EnterConfigMode() 
 {
-    config_mode_ = true;
-    if (ap_ssid_.empty()) {
-        SetApSsid("wifi");
+
+    if (timer_handle_) {
+        ESP_LOGI(TAG, "进入配置模式");
+    } else {
+        ESP_LOGE(TAG, "WiFi已停止，无法进入配置模式");
+        return;
     }
+    config_mode_ = true;
+    
+    // 启动AP模式
     StartAccessPoint();
+    
+    // 启动Web服务器
     StartWebServer();
+    
+    ESP_LOGI(TAG, "配置模式已启动");
+    
+    // 主循环
     while (true) {
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(1000*10));
     }
 }
 
@@ -330,53 +345,54 @@ void MyWifi::EnterConfigMode()
 /// @brief 启动AP
 void MyWifi::StartAccessPoint()
 {
-    wifi_mode_t current_mode{};
-    auto err = esp_wifi_get_mode(&current_mode);
-    if (err == ESP_ERR_WIFI_NOT_INIT) {
-        ESP_LOGI(TAG, "Initialize Wi-Fi ...");
-        esp_netif_init();
-        wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-        cfg.nvs_enable = false;
-        ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-    } else if (err != ERR_OK) {
-        ESP_LOGE(TAG, "Failed to get Wi-Fi mode, err=%s", esp_err_to_name(err));
-        esp_netif_init();
-        wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-        cfg.nvs_enable = false;
-        ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-    }
+    ESP_LOGI(TAG, "开始启动AP模式");
 
-    wifi_mode_t mode_after_init;
-    if (esp_wifi_get_mode(&mode_after_init) == ESP_OK && mode_after_init != WIFI_MODE_NULL) {
-        ESP_LOGI(TAG, "Stopping current Wi-Fi mode (%d)", mode_after_init);
-        ESP_ERROR_CHECK(esp_wifi_stop());
-    }
+    // 清除连接状态
+    xEventGroupClearBits(event_group_, WIFI_CONNECTED_BIT);
+    
+    // 断开当前连接（如果有）
+    esp_wifi_stop();
 
-    ap_if_ = esp_netif_create_default_wifi_ap();
-    esp_netif_ip_info_t ip_info;
-    IP4_ADDR(&ip_info.ip, 192, 168, 4, 1);
-    IP4_ADDR(&ip_info.gw, 192, 168, 4, 1);
-    IP4_ADDR(&ip_info.netmask, 255, 255, 255, 0);
-    esp_netif_dhcps_stop(ap_if_);
-    esp_netif_set_ip_info(ap_if_, &ip_info);
-    esp_netif_dhcps_start(ap_if_);
-
-    // 启动DNS。。。。。。。。。。。。。。还没有想好怎么处理............使用异步TCP
-
-    // Set the WiFi configuration
-    wifi_config_t wifi_config = {};
-    strcpy((char *)wifi_config.ap.ssid, ap_ssid_.c_str());
-    wifi_config.ap.ssid_len = ap_ssid_.length();
-    wifi_config.ap.max_connection = 4;
-    wifi_config.ap.authmode = WIFI_AUTH_OPEN;
-
-    // Start the WiFi Access Point
+    // 切换到APSTA模式
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
-    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
-    ESP_ERROR_CHECK(esp_wifi_start());
+    // 设置AP SSID
+    if (ap_ssid_.empty()) {
+        SetApSsid("wifi");
+    }
 
-    ESP_LOGI(TAG, "Access Point started with SSID %s", ap_ssid_.c_str());
+    // 配置AP
+    wifi_config_t ap_config = {};
+    strncpy((char *)ap_config.ap.ssid, ap_ssid_.c_str(), sizeof(ap_config.ap.ssid) - 1);
+    ap_config.ap.ssid_len = ap_ssid_.length();
+    ap_config.ap.channel = 1;
+    ap_config.ap.authmode = WIFI_AUTH_OPEN;
+    ap_config.ap.max_connection = 4;
+    ap_config.ap.beacon_interval = 100;
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+    
+    // 配置STA用于扫描
+    wifi_config_t sta_config = {};
+    sta_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+    sta_config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+    sta_config.sta.threshold.rssi = -127;
+    sta_config.sta.threshold.authmode = WIFI_AUTH_OPEN;
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
+    // 创建AP网络接口（如果不存在）
+    if (ap_if_ == nullptr) {
+        ap_if_ = esp_netif_create_default_wifi_ap();
+        
+        esp_netif_ip_info_t ip_info;
+        IP4_ADDR(&ip_info.ip, 192, 168, 4, 1);
+        IP4_ADDR(&ip_info.gw, 192, 168, 4, 1);
+        IP4_ADDR(&ip_info.netmask, 255, 255, 255, 0);
+        esp_netif_dhcps_stop(ap_if_);
+        esp_netif_set_ip_info(ap_if_, &ip_info);
+        esp_netif_dhcps_start(ap_if_);
+    }
+    
+    // 确保WiFi已启动
+    ESP_ERROR_CHECK(esp_wifi_start());
+    ESP_LOGI(TAG, "AP已启动，SSID: %s", ap_ssid_.c_str());
 
     // 读取OTA URL
     MyNVS nvs("wifi", NVS_READWRITE);
@@ -399,6 +415,15 @@ void MyWifi::StartAccessPoint()
     if (ESP_OK == nvs.read("sleep_mode", sleep_mode_)) {
         sleep_mode_ = true; // 默认值
     }
+
+
+    // 初始化扫描定时器
+    if (timer_handle_ != nullptr) {
+        esp_timer_stop(timer_handle_);
+    }
+    // 立即开始第一次扫描
+    esp_wifi_scan_start(nullptr, false);
+    ESP_LOGI(TAG, "AP模式启动完成，已开始扫描");
 }
 
 /// @brief 主页处理程序
@@ -470,39 +495,27 @@ void MyWifi::StartWebServer()
         req->send(200, "text/html; charset=utf-8", done_html_start);
     });
     server_->on("/saved/list", [this](AsyncWebServerRequest* req) {
-        std::vector<std::string> ssids;
+        std::string json;
+        json.reserve(512);
+        json += R"([)";
         if (!default_ssid_.empty()) {
-            ssids.push_back(default_ssid_);
+            json += R"(")";
+            json += default_ssid_;
+            json += R"(",)";
         }
-        storage_.ForeachReadOnly([this, &ssids](const WifiAuth& wifi){
-            if (wifi.ssid[0] != '\0' && default_ssid_ != wifi.ssid) {
-                ssids.push_back(std::string(wifi.ssid));
+        storage_.ForeachReadOnly([this, &json](const WifiAuth& wifi) {
+            if (default_ssid_ != wifi.ssid) {
+                json += R"(")";
+                json += std::string(wifi.ssid);
+                json += R"(",)";            
             }
             return false;
         });
-
-        if (ssids.empty()) {
-            req->send(200, "application/json", "[]");
-        } else {
-            size_t total_len = 2;
-            for (const auto& ssid : ssids) {
-                total_len += ssid.size() + 4;
-            }
-            total_len -= 1;
-
-            std::string json;
-            json.reserve(total_len);
-            json += R"([)";
-            for (size_t i = 0; i < ssids.size(); i++) {
-                json.push_back('"');
-                json += ssids[i];
-                json += R"(",)";
-            }
+        if (json.back() == ',') {
             json.pop_back();
-            json.push_back(']');
-            req->send(200, "application/json", json);
         }
-        return;
+        json += R"(])";
+        req->send(200, "application/json", json);
     });
     server_->on("/saved/set_default", [this](AsyncWebServerRequest* req) {
         default_ssid_ = req->arg("ssid");
@@ -529,37 +542,28 @@ void MyWifi::StartWebServer()
         }
     });
     server_->on("/scan", [this](AsyncWebServerRequest* req) {
-        auto* response = req->beginChunkedResponse("application/json", [this](uint8_t* buffer, size_t maxLen, size_t index) -> size_t {
-            static size_t current = 0;
-            char buf[128];
+        std::string json;
+        json.reserve(2048);
 
-            auto scan_size = scan_result_.size();
-            if (current >= scan_size) {
-                current = 0;
-                return 0;
-            }
-
-            snprintf(buf, 128, "%s{\"ssid\":\"%s\",\"rssi\":%d,\"authmode\":%d}%s",
-                                    (current == 0) ? "[" : "",
-                                    (char*)scan_result_[current].ssid,
-                                    scan_result_[current].rssi,
-                                    scan_result_[current].authmode,
-                                    current == (scan_size - 1 )? "]" : ",");
-            current++;
-            auto size =  strlen(buf);
-            if (size <= maxLen) {
-                memcpy(buffer, buf, size);
-            } else {
-                ESP_LOGE(TAG, "Buffer too small for AP data, need %d, available %d", size, maxLen);
-                current = 0;
-                size = 0;
-            }
-            return size;
-        });
-
+        json += R"([)";
         xEventGroupWaitBits(event_group_, SSID_VECTOR_FREE_BIT, pdTRUE, pdFALSE, portMAX_DELAY);
-        req->send(response);
+        auto result = std::move(scan_result_);
         xEventGroupSetBits(event_group_, SSID_VECTOR_FREE_BIT);
+        auto scan_size = result.size();
+        for (size_t i = 0; i < scan_size; i++) {
+            json += R"({"ssid":")";
+            json += (char*)(result[i].ssid);
+            json += R"(","rssi":)";
+            json += std::to_string(result[i].rssi);
+            json += R"(,"authmode":)";
+            json += std::to_string(result[i].authmode);
+            json += R"(},)";
+        }
+        if (json.back() == ',') {
+            json.pop_back();
+        }
+        json += R"(])";
+        req->send(200, "application/json", json.c_str());
     });
     server_->on("/submit", HTTP_POST, 
         [](AsyncWebServerRequest *req){},
@@ -567,6 +571,7 @@ void MyWifi::StartWebServer()
         [this](AsyncWebServerRequest *req, uint8_t *data, size_t len, size_t index, size_t total) {
             if (total > 1024) {
                 req->send(400, "text/plain", "Payload too large");
+                return;
             }
 
             // 针对小的数据块进行优化
@@ -642,6 +647,7 @@ void MyWifi::StartWebServer()
         [this](AsyncWebServerRequest *req, uint8_t *data, size_t len, size_t index, size_t total) {
             if (total > 1024) {
                 req->send(400, "text/plain", "Payload too large");
+                return;
             }
 
             // 针对小的数据块进行优化
@@ -657,6 +663,7 @@ void MyWifi::StartWebServer()
                     json_ptr = json_.c_str();
                 }
             }
+            ESP_LOGW(TAG, "Receive: %s", json_ptr);
             
             if (json_ptr) {
                 auto* json = cJSON_Parse(json_ptr);
@@ -724,7 +731,12 @@ void MyWifi::SetApSsid(const std::string&& prefix)
 {
     uint8_t mac[6];
 
-    ESP_ERROR_CHECK(esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP));
+    auto ret = esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to read MAC address, err=%s", esp_err_to_name(ret));
+        mac[4] = esp_random() & 0xff;
+        mac[5] = esp_random() & 0xff;
+    }
     char ssid[32];
     snprintf(ssid, sizeof(ssid), "%s-%02X%02X", prefix.c_str(), mac[4], mac[5]);
     ap_ssid_ = ssid;
