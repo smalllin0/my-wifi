@@ -466,6 +466,11 @@
             fetch('/scan')
                 .then(response => response.json())
                 .then(data => {
+                    // 如果返回的是空数组，不更新页面，但仍继续轮询
+                    if (Array.isArray(data) && data.length === 0) {
+                        setTimeout(loadAPList, 5000);
+                        return;
+                    }
                     const lang = document.getElementById('language').value;
                     const apList = document.getElementById('ap_list');
                     apList.innerHTML = '<p>' + translations[lang].select_wifi + '</p>';
