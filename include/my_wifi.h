@@ -28,6 +28,10 @@ public:
     const std::string& GetIpAddress() const { return ip_address_; }
     bool    SaveAuth(const std::string& ssid, const std::string& passwd);
     void    SetApSsid(const std::string&& prefix);
+    ///@breif 获取存储的auth条目数量
+    size_t  GetSaveAuthCount() {
+        return storage_.GetUsed();
+    }
 
     void SetPowerSaveMode(bool enabled) {
         ESP_ERROR_CHECK(esp_wifi_set_ps(enabled ? WIFI_PS_MIN_MODEM : WIFI_PS_NONE));
