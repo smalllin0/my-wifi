@@ -15,7 +15,9 @@
 #define MAX_RECONNECT_COUNT     3
 
 extern const char index_html_start[] asm("_binary_wifi_configuration_html_start");
-extern const char done_html_start[] asm("_binary_wifi_configuration_done_html_start");
+extern const char index_html_end[]   asm("_binary_wifi_configuration_html_end");
+extern const char done_html_start[]  asm("_binary_wifi_configuration_done_html_start");
+extern const char done_html_end[]    asm("_binary_wifi_configuration_done_html_end");
 
 MyWifi::MyWifi()
     : storage_(MyStorage<WifiAuth>("Wifi", DECLARE_META(WifiAuth,
@@ -429,7 +431,10 @@ void MyWifi::StartAccessPoint()
 /// @brief 主页处理程序
 void MyWifi::IndexHandle(AsyncWebServerRequest* req)
 {
-    req->send(200, "text/html; charset=utf-8", index_html_start);
+    size_t len = index_html_end - index_html_start;
+    req->send_P(200, "text/html; charset=utf-8",
+                reinterpret_cast<const uint8_t*>(index_html_start),
+                len);
 }
 
 /// @brief 以指定方式连接指定的WiFi
@@ -492,7 +497,10 @@ void MyWifi::StartWebServer()
     server_->on("/", IndexHandle);
     server_->on("/index.html", IndexHandle);
     server_->on("/done.html", [this](AsyncWebServerRequest* req) {
-        req->send(200, "text/html; charset=utf-8", done_html_start);
+    size_t len = done_html_end - done_html_start;
+        req->send_P(200, "text/html; charset=utf-8",
+                    reinterpret_cast<const uint8_t*>(done_html_start),
+                    len);
     });
     server_->on("/saved/list", [this](AsyncWebServerRequest* req) {
         std::string json;
